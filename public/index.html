@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>EdgeLedger · Trading Journal</title>
+    <meta name="description" content="EdgeLedger — a local-first trading journal. Log trades with screenshots and see win rate, average R and P&amp;L by day or setup." />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230f1420'/%3E%3Cpath d='M7 22 L13 13 L18 17 L25 8' stroke='%236d8cff' stroke-width='3' fill='none' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E" />
+    <link rel="stylesheet" href="/styles.css" />
+  </head>
+  <body>
+    <header class="topbar">
+      <div class="brand">
+        <span class="brand-mark" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none"><path d="M4 17.5 9.5 10l4 3.6L20 5.5" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        </span>
+        <div class="brand-text">
+          <strong>EdgeLedger</strong>
+          <span>Trading journal</span>
+        </div>
+      </div>
+
+      <label class="search">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.8"/><path d="m16 16 4 4" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+        <input id="search" type="search" placeholder="Search symbol, setup or notes" autocomplete="off" spellcheck="false" />
+        <kbd>/</kbd>
+      </label>
+
+      <div class="top-actions">
+        <select id="currency" class="ghost-select" title="Display currency" aria-label="Display currency">
+          <option value="USD">$ USD</option>
+          <option value="EUR">€ EUR</option>
+          <option value="GBP">£ GBP</option>
+          <option value="INR">₹ INR</option>
+          <option value="JPY">¥ JPY</option>
+          <option value="AUD">$ AUD</option>
+        </select>
+        <button id="export-btn" class="btn ghost" type="button" title="Export trades to CSV">Export</button>
+        <button id="new-btn" class="btn primary" type="button">
+          <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>
+          New trade
+          <kbd>N</kbd>
+        </button>
+      </div>
+    </header>
+
+    <main class="layout">
+      <div class="col-main">
+        <section class="kpis" id="kpis" aria-label="Performance summary"></section>
+
+        <section class="card equity-card" aria-labelledby="equity-title">
+          <div class="card-head">
+            <div>
+              <h2 id="equity-title">Equity curve</h2>
+              <p class="sub" id="equity-sub">Cumulative net P&amp;L</p>
+            </div>
+            <div class="seg" id="equity-range" role="group" aria-label="Equity range">
+              <button type="button" data-range="all" class="active">All</button>
+              <button type="button" data-range="30">30D</button>
+              <button type="button" data-range="7">7D</button>
+            </div>
+          </div>
+          <div id="equity-chart" class="chart"></div>
+        </section>
+
+        <section class="card table-card" aria-labelledby="trades-title">
+          <div class="card-head">
+            <div>
+              <h2 id="trades-title">Trades</h2>
+              <p class="sub" id="trades-sub">—</p>
+            </div>
+            <div class="filter-row">
+              <select id="filter-setup" aria-label="Filter by setup"><option value="">All setups</option></select>
+              <select id="filter-side" aria-label="Filter by direction">
+                <option value="">Both sides</option>
+                <option value="long">Long</option>
+                <option value="short">Short</option>
+              </select>
+              <select id="filter-result" aria-label="Filter by result">
+                <option value="">All results</option>
+                <option value="win">Wins</option>
+                <option value="loss">Losses</option>
+                <option value="open">Open</option>
+              </select>
+              <button id="filter-clear" class="btn tiny ghost hidden" type="button">Clear</button>
+            </div>
+          </div>
+
+          <div id="trades-empty" class="empty hidden">
+            <h3>No trades yet</h3>
+            <p>Log your first fill to start building an edge you can actually measure.</p>
+            <div class="empty-actions">
+              <button class="btn primary" type="button" data-action="focus-form">Log a trade</button>
+              <button class="btn ghost" type="button" data-action="seed">Load sample data</button>
+            </div>
+          </div>
+          <div id="trades-noresults" class="empty hidden">
+            <h3>Nothing matches those filters</h3>
+            <p>Try a different symbol, setup or result.</p>
+            <button class="btn ghost" type="button" data-action="clear-filters">Reset filters</button>
+          </div>
+
+          <div class="table-wrap" id="table-wrap">
+            <table class="trades">
+              <thead>
+                <tr>
+                  <th class="sortable" data-sort="date">Date</th>
+                  <th class="sortable" data-sort="symbol">Symbol</th>
+                  <th class="sortable" data-sort="setup">Setup</th>
+                  <th class="num">Entry → Exit</th>
+                  <th class="num sortable" data-sort="size">Size</th>
+                  <th class="num sortable" data-sort="r">R</th>
+                  <th class="num sortable" data-sort="pnl">P&amp;L</th>
+                  <th class="center">Shots</th>
+                </tr>
+              </thead>
+              <tbody id="trades-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+      </div>
+
+      <aside class="col-side">
+        <section class="card editor" id="editor" aria-labelledby="editor-title">
+          <div class="card-head editor-head">
+            <div>
+              <h2 id="editor-title">New trade</h2>
+              <p class="sub" id="editor-sub">Log the plan, not just the result</p>
+            </div>
+            <button id="editor-reset" class="btn tiny ghost hidden" type="button">Cancel</button>
+          </div>
+
+          <form id="trade-form" autocomplete="off" novalidate>
+            <div class="field-row">
+              <label class="field">
+                <span>Symbol</span>
+                <input name="symbol" id="f-symbol" type="text" placeholder="NVDA" list="symbol-list" required maxlength="24" spellcheck="false" />
+                <datalist id="symbol-list"></datalist>
+              </label>
+              <div class="field">
+                <span>Direction</span>
+                <div class="seg side-seg" id="f-side" role="group" aria-label="Direction">
+                  <button type="button" data-side="long" class="active">Long</button>
+                  <button type="button" data-side="short">Short</button>
+                </div>
+              </div>
+            </div>
+
+            <label class="field">
+              <span>Setup</span>
+              <input name="setup" id="f-setup" type="text" placeholder="Opening range breakout" list="setup-list" maxlength="60" />
+              <datalist id="setup-list"></datalist>
+            </label>
+
+            <div class="field-row">
+              <label class="field">
+                <span>Size <em>(qty)</em></span>
+                <input name="size" id="f-size" type="number" step="any" min="0" placeholder="100" required inputmode="decimal" />
+              </label>
+              <label class="field">
+                <span>Fees <em>(optional)</em></span>
+                <input name="fees" id="f-fees" type="number" step="any" placeholder="0.00" inputmode="decimal" />
+              </label>
+            </div>
+
+            <div class="field-row three">
+              <label class="field">
+                <span>Entry</span>
+                <input name="entry_price" id="f-entry" type="number" step="any" min="0" placeholder="0.00" required inputmode="decimal" />
+              </label>
+              <label class="field">
+                <span>Stop</span>
+                <input name="stop_price" id="f-stop" type="number" step="any" min="0" placeholder="0.00" inputmode="decimal" />
+              </label>
+              <label class="field">
+                <span>Target</span>
+                <input name="target_price" id="f-target" type="number" step="any" min="0" placeholder="0.00" inputmode="decimal" />
+              </label>
+            </div>
+
+            <label class="field">
+              <span>Exit <em>(leave blank while still open)</em></span>
+              <input name="exit_price" id="f-exit" type="number" step="any" min="0" placeholder="0.00" inputmode="decimal" />
+            </label>
+
+            <div class="field-row">
+              <label class="field">
+                <span>Entered at</span>
+                <input name="entry_at" id="f-entry-at" type="datetime-local" required />
+              </label>
+              <label class="field">
+                <span>Exited at</span>
+                <input name="exit_at" id="f-exit-at" type="datetime-local" />
+              </label>
+            </div>
+
+            <div class="calc-strip" id="calc-strip">
+              <div><span>P&amp;L</span><strong id="calc-pnl">—</strong></div>
+              <div><span>R multiple</span><strong id="calc-r">—</strong></div>
+              <div><span>Risk</span><strong id="calc-risk">—</strong></div>
+              <div><span>Planned R:R</span><strong id="calc-rr">—</strong></div>
+            </div>
+
+            <div class="field">
+              <span>Execution grade</span>
+              <div class="rating" id="f-rating" role="group" aria-label="Execution grade"></div>
+            </div>
+
+            <label class="field">
+              <span>Notes</span>
+              <textarea name="notes" id="f-notes" rows="3" placeholder="What was the thesis? Did you follow your plan?"></textarea>
+            </label>
+
+            <div class="field">
+              <span>Screenshots <em>(drop, paste or click)</em></span>
+              <div class="dropzone" id="dropzone" tabindex="0" role="button" aria-label="Add screenshots">
+                <input type="file" id="file-input" accept="image/png,image/jpeg,image/webp,image/gif" multiple hidden />
+                <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 16V4m0 0L7.5 8.5M12 4l4.5 4.5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/><path d="M4 15v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/></svg>
+                <span>Drop chart images here, paste, or <b>browse</b></span>
+              </div>
+              <div class="thumbs" id="thumbs"></div>
+            </div>
+
+            <div class="form-actions">
+              <button class="btn primary block" type="submit" id="save-btn">Save trade</button>
+              <button class="btn ghost danger" type="button" id="delete-btn" title="Delete this trade">Delete</button>
+            </div>
+            <p class="form-hint" id="form-hint">Ctrl/⌘ + Enter to save</p>
+          </form>
+        </section>
+      </aside>
+
+      <div class="analytics">
+          <section class="card calendar-card" aria-labelledby="cal-title">
+            <div class="card-head">
+              <div>
+                <h2 id="cal-title">P&amp;L by day</h2>
+                <p class="sub" id="cal-sub">Realized, by exit date</p>
+              </div>
+              <div class="cal-nav">
+                <button class="icon-btn" id="cal-prev" type="button" aria-label="Previous month">
+                  <svg viewBox="0 0 24 24" fill="none"><path d="m14 6-6 6 6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+                <button class="icon-btn" id="cal-next" type="button" aria-label="Next month">
+                  <svg viewBox="0 0 24 24" fill="none"><path d="m10 6 6 6-6 6" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+                </button>
+              </div>
+            </div>
+            <div id="calendar" class="calendar"></div>
+          </section>
+
+          <section class="card setups-card" aria-labelledby="setup-title">
+            <div class="card-head">
+              <div>
+                <h2 id="setup-title">P&amp;L by setup</h2>
+                <p class="sub" id="setup-sub">Click a setup to filter the journal</p>
+              </div>
+            </div>
+            <div id="setups" class="setups"></div>
+          </section>
+        </div>
+    </main>
+
+    <footer class="foot">
+      <span>EdgeLedger · local-first journal</span>
+      <span class="dot">·</span>
+      <span id="foot-stat">—</span>
+      <button class="link-btn" id="wipe-btn" type="button">Clear all data</button>
+    </footer>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+    <div id="boot-error" class="boot-error hidden" role="alert">
+      <div class="boot-card">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 8v5" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/><circle cx="12" cy="16.4" r="1.1" fill="currentColor"/><path d="M10.3 4.2 2.9 17a2 2 0 0 0 1.7 3h14.8a2 2 0 0 0 1.7-3L13.7 4.2a2 2 0 0 0-3.4 0Z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/></svg>
+        <h2>Can't reach the journal server</h2>
+        <p>This page has to be served by the local journal process — opening the HTML file directly won't work.</p>
+        <ol>
+          <li>Open a terminal in the project folder</li>
+          <li>Run <code>npm start</code></li>
+          <li>Open <a href="http://127.0.0.1:4173">http://127.0.0.1:4173</a></li>
+        </ol>
+        <p class="boot-detail" id="boot-detail"></p>
+        <button class="btn primary" id="boot-retry" type="button">Retry</button>
+      </div>
+    </div>
+
+    <div id="lightbox" class="lightbox hidden" role="dialog" aria-modal="true" aria-label="Screenshot preview">
+      <button class="lightbox-close" id="lightbox-close" type="button" aria-label="Close">✕</button>
+      <img id="lightbox-img" alt="Trade screenshot" />
+    </div>
+
+    <script src="/app.js" type="module"></script>
+  </body>
+</html>

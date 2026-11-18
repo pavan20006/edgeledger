@@ -1,0 +1,82 @@
+# ---------------------------------------------------------------------------
+# Dependencies (this project has none, but keep the folder out of Git anyway)
+# ---------------------------------------------------------------------------
+node_modules/
+jspm_packages/
+.pnp
+.pnp.js
+.yarn/
+
+# ---------------------------------------------------------------------------
+# Your journal data — private, machine-local, never commit
+# data/ holds journal.db (trades + screenshots as blobs) and its WAL files.
+# ---------------------------------------------------------------------------
+data/
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+*.sqlite
+*.sqlite3
+*.sqlite-wal
+*.sqlite-shm
+
+# ---------------------------------------------------------------------------
+# Secrets and environment files
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+secrets.json
+config.local.*
+
+# ---------------------------------------------------------------------------
+# Logs and temporary files
+# ---------------------------------------------------------------------------
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+tmp/
+temp/
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# ---------------------------------------------------------------------------
+# Local scratch files (throwaway scripts / captures used while developing)
+# ---------------------------------------------------------------------------
+_*.mjs
+_*.png
+
+# ---------------------------------------------------------------------------
+# Windows OS metadata
+# ---------------------------------------------------------------------------
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+Desktop.ini
+$RECYCLE.BIN/
+*.lnk
+*.stackdump
+.directory
+
+# ---------------------------------------------------------------------------
+# Editors, IDEs, build caches
+# ---------------------------------------------------------------------------
+.vscode/
+!.vscode/extensions.json
+.idea/
+*.iml
+coverage/
+.cache/
+.DS_Store
