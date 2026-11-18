@@ -29,7 +29,7 @@ function flag(name, fallback) {
   return fallback;
 }
 const PORT = Number(flag('port', process.env.PORT || 4173));
-const HOST = flag('host', process.env.HOST || '127.0.0.1');
+const HOST = flag('host', process.env.HOST || '0.0.0.0');
 const OPEN_BROWSER = argv.includes('--open');
 const MAX_IMAGE_BYTES = 12 * 1024 * 1024;
 
