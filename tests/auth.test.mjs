@@ -8,7 +8,7 @@ import { spawn } from 'node:child_process';
 const dir = mkdtempSync(path.join(tmpdir(), 'edgeledger-auth-'));
 const port = 25000 + Math.floor(Math.random() * 10000);
 const base = 'http://127.0.0.1:' + port;
-const child = spawn(process.execPath, ['server.js'], {
+let child = spawn(process.execPath, ['server.js'], {
   cwd: process.cwd(), env: { ...process.env, JOURNAL_DB: path.join(dir, 'test.db'), PORT: String(port), HOST: '127.0.0.1' },
   stdio: ['ignore', 'pipe', 'pipe']
 });
@@ -69,6 +69,18 @@ test('signup, login, logout, user isolation, old trades remain unassigned', asyn
     assert.equal((await call('/trades', { method: 'DELETE', cookie: b.cookie })).status, 200);
     assert.equal((await call('/trades', { cookie: a.cookie })).data.trades.length, 1);
     assert.equal((await call('/auth/logout', { method: 'POST', cookie: a.cookie })).status, 200);
+    assert.equal((await call('/trades', { cookie: a.cookie })).status, 401);
+    // A valid session must survive a server restart with the same SQLite database.
+    child.kill();
+    await new Promise(resolve => child.once('exit', resolve));
+    child = spawn(process.execPath, ['server.js'], {
+      cwd: process.cwd(), env: { ...process.env, JOURNAL_DB: path.join(dir, 'test.db'), PORT: String(port), HOST: '127.0.0.1' },
+      stdio: ['ignore', 'pipe', 'pipe']
+    });
+    child.stderr.on('data', b => { stderr += b.toString(); });
+    await wait();
+    assert.equal((await call('/auth/me', { cookie: b.cookie })).status, 200);
+    assert.equal((await call('/trades', { cookie: b.cookie })).status, 200);
     assert.equal((await call('/trades', { cookie: a.cookie })).status, 401);
   } finally {
     child.kill();
