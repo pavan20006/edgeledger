@@ -9,6 +9,17 @@
     <link rel="stylesheet" href="/styles.css" />
   </head>
   <body>
+    <section id="auth-screen" class="auth-screen">
+      <form id="auth-form" class="auth-panel">
+        <h1>EdgeLedger</h1>
+        <p id="auth-heading">Log in to your trading journal</p>
+        <label>Email <input id="auth-email" type="email" autocomplete="email" required maxlength="254" /></label>
+        <label>Password <input id="auth-password" type="password" autocomplete="current-password" minlength="12" required /></label>
+        <p id="auth-error" role="alert"></p>
+        <button class="btn primary block" id="auth-submit" type="submit">Log in</button>
+        <button class="link-btn" id="auth-toggle" type="button">Create an account</button>
+      </form>
+    </section>
     <header class="topbar">
       <div class="brand">
         <span class="brand-mark" aria-hidden="true">
@@ -35,6 +46,7 @@
           <option value="JPY">¥ JPY</option>
           <option value="AUD">$ AUD</option>
         </select>
+        <button id="logout-btn" class="btn ghost" type="button">Log out</button>
         <button id="export-btn" class="btn ghost" type="button" title="Export trades to CSV">Export</button>
         <button id="new-btn" class="btn primary" type="button">
           <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/></svg>

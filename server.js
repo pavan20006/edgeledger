@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { randomBytes, scryptSync, timingSafeEqual, createHash } from 'node:crypto';
 import fs from 'node:fs';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -72,7 +73,72 @@ db.exec(`
   );
 
   CREATE INDEX IF NOT EXISTS idx_images_trade ON images(trade_id);
+  CREATE TABLE IF NOT EXISTS users (id INTEGER PRIMARY KEY AUTOINCREMENT, email TEXT NOT NULL UNIQUE COLLATE NOCASE, password_hash TEXT NOT NULL, created_at TEXT NOT NULL);
+  CREATE TABLE IF NOT EXISTS sessions (token_hash TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE, expires_at INTEGER NOT NULL);
 `);
+if (!db.prepare('PRAGMA table_info(trades)').all().some(c => c.name === 'user_id')) db.exec('ALTER TABLE trades ADD COLUMN user_id INTEGER REFERENCES users(id)');
+db.exec('CREATE INDEX IF NOT EXISTS idx_trades_user ON trades(user_id)');
+
+
+
+/* Lightweight per-process auth throttling. No external service required. */
+const authAttempts = new Map();
+function throttleAuth(req, res, key, limit = 10) {
+  const now = Date.now();
+  // Use the socket address, not a client-supplied X-Forwarded-For header.
+  const ip = String(req.socket.remoteAddress || 'unknown');
+  const id = ip + ':' + key;
+  const current = authAttempts.get(id);
+  if (!current || current.until <= now) {
+    authAttempts.set(id, { count: 1, until: now + 15 * 60 * 1000 });
+    return false;
+  }
+  current.count++;
+  if (current.count <= limit) return false;
+  res.setHeader('Retry-After', String(Math.ceil((current.until - now) / 1000)));
+  fail(res, 429, 'Too many attempts. Try again later.');
+  return true;
+}
+
+/* ---------------------------------------------------------------- auth */
+const digest = value => createHash('sha256').update(value).digest('hex');
+function hashPassword(password) {
+  const salt = randomBytes(16).toString('hex');
+  return salt + ':' + scryptSync(password, salt, 64).toString('hex');
+}
+function verifyPassword(password, hash) {
+  const [salt, value] = (hash || '').split(':');
+  return !!salt && /^[0-9a-f]{128}$/.test(value || '') &&
+    timingSafeEqual(scryptSync(password, salt, 64), Buffer.from(value, 'hex'));
+}
+function cookie(req) {
+  const item = (req.headers.cookie || '').split(';').map(s => s.trim()).find(s => s.startsWith('edgeledger_session='));
+  return item ? item.slice('edgeledger_session='.length) : '';
+}
+function currentUser(req) {
+  const token = cookie(req);
+  if (!/^[0-9a-f]{64}$/.test(token)) return null;
+  return db.prepare('SELECT users.id, users.email FROM sessions JOIN users ON users.id = sessions.user_id WHERE token_hash = ? AND expires_at > ?')
+    .get(digest(token), Date.now()) || null;
+}
+function setSessionCookie(req, res, token, maxAge = 604800) {
+  const secure = process.env.NODE_ENV === 'production' || req.headers['x-forwarded-proto'] === 'https';
+  res.setHeader('Set-Cookie', 'edgeledger_session=' + token + '; Path=/; HttpOnly; SameSite=Strict; Max-Age=' + maxAge + (secure ? '; Secure' : ''));
+}
+function startSession(req, res, user) {
+  const token = randomBytes(32).toString('hex');
+  db.prepare('INSERT INTO sessions (token_hash, user_id, expires_at) VALUES (?, ?, ?)').run(digest(token), user.id, Date.now() + 604800000);
+  setSessionCookie(req, res, token);
+  sendJson(res, 200, { user: { id: user.id, email: user.email } });
+}
+function validOrigin(req) {
+  if (!req.headers.origin) return true;
+  try {
+    const proto = req.headers['x-forwarded-proto'] || (req.socket.encrypted ? 'https' : 'http');
+    const host = req.headers['x-forwarded-host'] || req.headers.host;
+    return new URL(req.headers.origin).origin === new URL(proto + '://' + host).origin;
+  } catch { return false; }
+}
 
 /* ---------------------------------------------------------------- helpers */
 
@@ -167,9 +233,9 @@ function normaliseTrade(input, { partial = false } = {}) {
 
 const TRADE_COLUMNS = ['symbol', 'setup', 'side', 'entry_price', 'exit_price', 'size', 'stop_price', 'target_price', 'fees', 'entry_at', 'exit_at', 'notes', 'rating'];
 
-function listTrades() {
-  const rows = db.prepare(`SELECT * FROM trades ORDER BY COALESCE(exit_at, entry_at) DESC, id DESC`).all();
-  const imgs = db.prepare(`SELECT id, trade_id, name, mime, created_at FROM images ORDER BY id`).all();
+function listTrades(userId) {
+  const rows = db.prepare(`SELECT * FROM trades WHERE user_id = ? ORDER BY COALESCE(exit_at, entry_at) DESC, id DESC`).all(userId);
+  const imgs = db.prepare(`SELECT images.id, images.trade_id, images.name, images.mime, images.created_at FROM images JOIN trades ON trades.id = images.trade_id WHERE trades.user_id = ? ORDER BY images.id`).all(userId);
   const byTrade = new Map();
   for (const img of imgs) {
     if (!byTrade.has(img.trade_id)) byTrade.set(img.trade_id, []);
@@ -178,8 +244,8 @@ function listTrades() {
   return rows.map((r) => ({ ...r, images: byTrade.get(r.id) || [] }));
 }
 
-function getTrade(id) {
-  const row = db.prepare(`SELECT * FROM trades WHERE id = ?`).get(id);
+function getTrade(id, userId) {
+  const row = db.prepare(`SELECT * FROM trades WHERE id = ? AND user_id = ?`).get(id, userId);
   if (!row) return null;
   row.images = db
     .prepare(`SELECT id, trade_id, name, mime, created_at FROM images WHERE trade_id = ? ORDER BY id`)
@@ -189,8 +255,8 @@ function getTrade(id) {
 
 /* ------------------------------------------------------------- sample data */
 
-function seedSampleData() {
-  const existing = db.prepare('SELECT COUNT(*) AS n FROM trades').get().n;
+function seedSampleData(userId) {
+  const existing = db.prepare('SELECT COUNT(*) AS n FROM trades WHERE user_id = ?').get(userId).n;
   if (existing > 0) return { inserted: 0 };
 
   const setups = [
@@ -220,8 +286,8 @@ function seedSampleData() {
   };
 
   const insert = db.prepare(`
-    INSERT INTO trades (symbol, side, setup, entry_price, exit_price, size, stop_price, target_price, fees, entry_at, exit_at, notes, rating, created_at, updated_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO trades (symbol, side, setup, entry_price, exit_price, size, stop_price, target_price, fees, entry_at, exit_at, notes, rating, created_at, updated_at, user_id)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `);
 
   let cursor = new Date();
@@ -262,7 +328,7 @@ function seedSampleData() {
       const rating = win ? 3 + Math.round(rand() * 2) : 1 + Math.round(rand() * 3);
       const timestamp = nowIso();
 
-      const info = insert.run(symbol, side, setup.name, entry, exit, size, stop, target, fees, iso(entryAt), iso(exitAt), notes, rating, timestamp, timestamp);
+      const info = insert.run(symbol, side, setup.name, entry, exit, size, stop, target, fees, iso(entryAt), iso(exitAt), notes, rating, timestamp, timestamp, userId);
       trades.push(info.lastInsertRowid);
     }
   }
@@ -299,10 +365,42 @@ const server = http.createServer(async (req, res) => {
     if (parts[0] === 'api') {
       const [, resource, idRaw, sub] = parts;
 
+
       if (resource === 'health') return sendJson(res, 200, { ok: true });
+      if (!['GET', 'HEAD'].includes(req.method) && !validOrigin(req)) return fail(res, 403, 'Invalid request origin');
+      if (resource === 'auth' && idRaw === 'signup' && req.method === 'POST') {
+        if (throttleAuth(req, res, 'signup', 8)) return;
+        const { email, password } = await readJson(req);
+        const e = typeof email === 'string' ? email.trim().toLowerCase() : '';
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) || e.length > 254) return fail(res, 400, 'Invalid email');
+        if (typeof password !== 'string' || password.length < 12 || password.length > 1024) return fail(res, 400, 'Password must be at least 12 characters');
+        if (db.prepare('SELECT id FROM users WHERE email = ?').get(e)) return fail(res, 409, 'Account already exists');
+        const result = db.prepare('INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)').run(e, hashPassword(password), nowIso());
+        return startSession(req, res, { id: Number(result.lastInsertRowid), email: e });
+      }
+      if (resource === 'auth' && idRaw === 'login' && req.method === 'POST') {
+        if (throttleAuth(req, res, 'login', 15)) return;
+        const { email, password } = await readJson(req);
+        const u = db.prepare('SELECT * FROM users WHERE email = ?').get(typeof email === 'string' ? email.trim().toLowerCase() : '');
+        if (!u || typeof password !== 'string' || !verifyPassword(password, u.password_hash)) return fail(res, 401, 'Invalid email or password');
+        return startSession(req, res, u);
+      }
+      if (resource === 'auth' && idRaw === 'me' && req.method === 'GET') {
+        const u = currentUser(req);
+        return u ? sendJson(res, 200, { user: u }) : fail(res, 401, 'Login required');
+      }
+      if (resource === 'auth' && idRaw === 'logout' && req.method === 'POST') {
+        const token = cookie(req);
+        if (token) db.prepare('DELETE FROM sessions WHERE token_hash = ?').run(digest(token));
+        setSessionCookie(req, res, '', 0);
+        return sendJson(res, 200, { ok: true });
+      }
+      const u = currentUser(req);
+      if (!u) return fail(res, 401, 'Login required');
+      const userId = u.id;
 
       if (resource === 'trades' && parts.length === 2) {
-        if (req.method === 'GET') return sendJson(res, 200, { trades: listTrades() });
+        if (req.method === 'GET') return sendJson(res, 200, { trades: listTrades(userId) });
         if (req.method === 'POST') {
           const data = normaliseTrade(await readJson(req));
           const ts = nowIso();
@@ -310,12 +408,12 @@ const server = http.createServer(async (req, res) => {
           const values = cols.map((c) => (data[c] === undefined ? null : data[c]));
           const placeholders = cols.map(() => '?').join(', ');
           const info = db
-            .prepare(`INSERT INTO trades (${cols.join(', ')}, created_at, updated_at) VALUES (${placeholders}, ?, ?)`)
-            .run(...values, ts, ts);
-          return sendJson(res, 201, { trade: getTrade(info.lastInsertRowid) });
+            .prepare(`INSERT INTO trades (${cols.join(', ')}, created_at, updated_at, user_id) VALUES (${placeholders}, ?, ?, ?)`)
+            .run(...values, ts, ts, userId);
+          return sendJson(res, 201, { trade: getTrade(info.lastInsertRowid, userId) });
         }
         if (req.method === 'DELETE') {
-          db.exec('DELETE FROM images; DELETE FROM trades;');
+          db.prepare('DELETE FROM trades WHERE user_id = ?').run(userId);
           return sendJson(res, 200, { ok: true });
         }
       }
@@ -323,7 +421,7 @@ const server = http.createServer(async (req, res) => {
       if (resource === 'trades' && idRaw && parts.length === 3) {
         const id = Number(idRaw);
         if (!Number.isInteger(id)) return fail(res, 400, 'Bad trade id');
-        const existing = getTrade(id);
+        const existing = getTrade(id, userId);
         if (!existing) return fail(res, 404, 'Trade not found');
 
         if (req.method === 'GET') return sendJson(res, 200, { trade: existing });
@@ -336,23 +434,23 @@ const server = http.createServer(async (req, res) => {
           // Re-validate the fully merged record so a partial edit cannot break invariants.
           const valid = normaliseTrade(merged);
           const assignments = keys.map((k) => `${k} = ?`).join(', ');
-          db.prepare(`UPDATE trades SET ${assignments}, updated_at = ? WHERE id = ?`).run(
+          db.prepare(`UPDATE trades SET ${assignments}, updated_at = ? WHERE id = ? AND user_id = ?`).run(
             ...keys.map((k) => valid[k] ?? null),
             nowIso(),
-            id,
+            id, userId,
           );
-          return sendJson(res, 200, { trade: getTrade(id) });
+          return sendJson(res, 200, { trade: getTrade(id, userId) });
         }
 
         if (req.method === 'DELETE') {
-          db.prepare('DELETE FROM trades WHERE id = ?').run(id);
+          db.prepare('DELETE FROM trades WHERE id = ? AND user_id = ?').run(id, userId);
           return sendJson(res, 200, { ok: true });
         }
       }
 
       if (resource === 'trades' && idRaw && sub === 'images') {
         const tradeId = Number(idRaw);
-        const trade = db.prepare('SELECT id FROM trades WHERE id = ?').get(tradeId);
+        const trade = db.prepare('SELECT id FROM trades WHERE id = ? AND user_id = ?').get(tradeId, userId);
         if (!trade) return fail(res, 404, 'Trade not found');
         if (req.method !== 'POST') return fail(res, 405, 'Method not allowed');
 
@@ -369,7 +467,7 @@ const server = http.createServer(async (req, res) => {
 
       if (resource === 'images' && idRaw && parts.length === 3) {
         const imageId = Number(idRaw);
-        const row = db.prepare('SELECT id, mime, data, name FROM images WHERE id = ?').get(imageId);
+        const row = db.prepare('SELECT images.id, images.mime, images.data, images.name FROM images JOIN trades ON trades.id = images.trade_id WHERE images.id = ? AND trades.user_id = ?').get(imageId, userId);
         if (!row) return fail(res, 404, 'Image not found');
         if (req.method === 'DELETE') {
           db.prepare('DELETE FROM images WHERE id = ?').run(imageId);
@@ -380,15 +478,15 @@ const server = http.createServer(async (req, res) => {
           res.writeHead(200, {
             'content-type': row.mime || 'image/png',
             'content-length': buf.length,
-            'cache-control': 'public, max-age=31536000, immutable',
+            'cache-control': 'private, no-store',
           });
           return res.end(buf);
         }
       }
 
       if (resource === 'seed' && req.method === 'POST') {
-        const result = seedSampleData();
-        return sendJson(res, 200, { ...result, trades: listTrades() });
+        const result = seedSampleData(userId);
+        return sendJson(res, 200, { ...result, trades: listTrades(userId) });
       }
 
       return fail(res, 404, 'Unknown API route');

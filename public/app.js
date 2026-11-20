@@ -1262,13 +1262,57 @@ function clearFilters() {
   render();
 }
 
+
+/* ---------------------------------------------------------- account access */
+let signupMode = false;
+function showAuth() {
+  $('#auth-screen').classList.remove('hidden');
+  $('#auth-password').value = '';
+}
+function hideAuth() { $('#auth-screen').classList.add('hidden'); }
+$('#auth-toggle').addEventListener('click', () => {
+  signupMode = !signupMode;
+  $('#auth-heading').textContent = signupMode ? 'Create your trading journal account' : 'Log in to your trading journal';
+  $('#auth-submit').textContent = signupMode ? 'Sign up' : 'Log in';
+  $('#auth-toggle').textContent = signupMode ? 'Already have an account? Log in' : 'Create an account';
+  $('#auth-password').autocomplete = signupMode ? 'new-password' : 'current-password';
+  $('#auth-error').textContent = '';
+});
+$('#auth-form').addEventListener('submit', async ev => {
+  ev.preventDefault();
+  $('#auth-error').textContent = '';
+  $('#auth-submit').disabled = true;
+  try {
+    await api(signupMode ? '/auth/signup' : '/auth/login', {
+      method: 'POST',
+      body: { email: $('#auth-email').value, password: $('#auth-password').value }
+    });
+    hideAuth();
+    await loadTrades();
+  } catch (err) { $('#auth-error').textContent = err.message; }
+  finally { $('#auth-submit').disabled = false; }
+});
+$('#logout-btn').addEventListener('click', async () => {
+  try { await api('/auth/logout', { method: 'POST' }); } catch {}
+  state.trades = [];
+  render();
+  showAuth();
+});
+
 /* ------------------------------------------------------------------- boot */
 
 (async function boot() {
   wire();
   openNew({ focus: false });
   try {
-    await loadTrades();
+    try {
+      await api('/auth/me');
+      hideAuth();
+      await loadTrades();
+    } catch (err) {
+      if (err.message === 'Login required') { showAuth(); return; }
+      throw err;
+    }
     if (state.trades.length) {
       const latest = state.trades.reduce((a, b) => (a.d.ts > b.d.ts ? a : b), state.trades[0]);
       state.calMonth = startOfMonth(parseLocal(latest.d.closed ? latest.d.exitAt : latest.entry_at) || new Date());
