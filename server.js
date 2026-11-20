@@ -352,7 +352,7 @@ const server = http.createServer(async (req, res) => {
       if (resource === 'auth' && idRaw === 'signup' && req.method === 'POST') {
         const { email, password } = await readJson(req);
         const e = typeof email === 'string' ? email.trim().toLowerCase() : '';
-        if (!/^[^\\s@]+@[^\\s@]+\\.[^\\s@]+$/.test(e) || e.length > 254) return fail(res, 400, 'Invalid email');
+        if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) || e.length > 254) return fail(res, 400, 'Invalid email');
         if (typeof password !== 'string' || password.length < 12 || password.length > 1024) return fail(res, 400, 'Password must be at least 12 characters');
         if (db.prepare('SELECT id FROM users WHERE email = ?').get(e)) return fail(res, 409, 'Account already exists');
         const result = db.prepare('INSERT INTO users (email, password_hash, created_at) VALUES (?, ?, ?)').run(e, hashPassword(password), nowIso());
