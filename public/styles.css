@@ -709,3 +709,13 @@ tbody tr:last-child td { border-bottom-color: transparent; }
 .boot-detail { margin-top: 12px; font-size: 11.5px; color: var(--muted); font-family: var(--mono); overflow-wrap: anywhere; }
 .boot-detail:empty { display: none; }
 #boot-retry { margin-top: 18px; }
+
+/* Authentication */
+.auth-screen { position:fixed; inset:0; z-index:1000; background:#0b1020; display:flex; justify-content:center; align-items:center; padding:24px; }
+.auth-screen.hidden { display:none; }
+.auth-panel { width:min(100%,410px); display:flex; flex-direction:column; gap:16px; background:#151d30; color:#f4f6ff; padding:32px; border-radius:18px; border:1px solid #34405a; }
+.auth-panel h1 { margin:0; font-size:28px; }
+.auth-panel p { margin:0; }
+.auth-panel label { display:flex; flex-direction:column; gap:7px; font-size:14px; }
+.auth-panel input { width:100%; padding:12px; background:#0b1020; color:#fff; border:1px solid #53617b; border-radius:8px; }
+#auth-error { color:#ff9eae; min-height:18px; }
