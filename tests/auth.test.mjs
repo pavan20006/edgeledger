@@ -22,11 +22,12 @@ async function wait() {
   }
   throw new Error('Server did not start: ' + stderr);
 }
-async function call(route, { method = 'GET', body, cookie } = {}) {
+async function call(route, { method = 'GET', body, cookie, raw, contentType } = {}) {
   const headers = {};
   if (body !== undefined) headers['content-type'] = 'application/json';
+  if (raw !== undefined) headers['content-type'] = contentType || 'image/png';
   if (cookie) headers.cookie = cookie;
-  const res = await fetch(base + '/api' + route, { method, headers, body: body === undefined ? undefined : JSON.stringify(body) });
+  const res = await fetch(base + '/api' + route, { method, headers, body: raw !== undefined ? raw : body === undefined ? undefined : JSON.stringify(body) });
   let data; try { data = await res.json(); } catch { data = null; }
   return { status: res.status, data, cookie: res.headers.get('set-cookie')?.split(';')[0] };
 }
@@ -53,6 +54,14 @@ test('signup, login, logout, user isolation, old trades remain unassigned', asyn
     const id = created.data.trade.id;
     assert.equal((await call('/trades', { cookie: a.cookie })).data.trades.length, 1);
     assert.equal((await call('/trades', { cookie: b.cookie })).data.trades.length, 0);
+    const upload = await call('/trades/' + id + '/images?name=test.png', { method: 'POST', cookie: a.cookie, raw: Buffer.from([137,80,78,71]), contentType: 'image/png' });
+    assert.equal(upload.status, 201, JSON.stringify(upload.data));
+    const imageId = upload.data.image.id;
+    assert.equal((await call('/images/' + imageId, { cookie: b.cookie })).status, 404);
+    assert.equal((await call('/images/' + imageId, { method: 'DELETE', cookie: b.cookie })).status, 404);
+    assert.equal((await call('/images/' + imageId, { cookie: a.cookie })).status, 200);
+    assert.equal((await call('/auth/me', { cookie: a.cookie })).status, 200);
+
     assert.equal((await call('/trades/' + id, { cookie: b.cookie })).status, 404);
     assert.equal((await call('/trades/' + id, { method: 'DELETE', cookie: b.cookie })).status, 404);
     assert.equal((await call('/trades/' + id, { method: 'PATCH', cookie: b.cookie, body: { notes: 'stolen' } })).status, 404);
