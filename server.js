@@ -85,7 +85,8 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_trades_user ON trades(user_id)');
 const authAttempts = new Map();
 function throttleAuth(req, res, key, limit = 10) {
   const now = Date.now();
-  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown').split(',')[0].trim();
+  // Use the socket address, not a client-supplied X-Forwarded-For header.
+  const ip = String(req.socket.remoteAddress || 'unknown');
   const id = ip + ':' + key;
   const current = authAttempts.get(id);
   if (!current || current.until <= now) {
