@@ -81,6 +81,24 @@ db.exec('CREATE INDEX IF NOT EXISTS idx_trades_user ON trades(user_id)');
 
 
 
+/* Lightweight per-process auth throttling. No external service required. */
+const authAttempts = new Map();
+function throttleAuth(req, res, key, limit = 10) {
+  const now = Date.now();
+  const ip = String(req.headers['x-forwarded-for'] || req.socket.remoteAddress || 'unknown').split(',')[0].trim();
+  const id = ip + ':' + key;
+  const current = authAttempts.get(id);
+  if (!current || current.until <= now) {
+    authAttempts.set(id, { count: 1, until: now + 15 * 60 * 1000 });
+    return false;
+  }
+  current.count++;
+  if (current.count <= limit) return false;
+  res.setHeader('Retry-After', String(Math.ceil((current.until - now) / 1000)));
+  fail(res, 429, 'Too many attempts. Try again later.');
+  return true;
+}
+
 /* ---------------------------------------------------------------- auth */
 const digest = value => createHash('sha256').update(value).digest('hex');
 function hashPassword(password) {
@@ -350,6 +368,7 @@ const server = http.createServer(async (req, res) => {
       if (resource === 'health') return sendJson(res, 200, { ok: true });
       if (!['GET', 'HEAD'].includes(req.method) && !validOrigin(req)) return fail(res, 403, 'Invalid request origin');
       if (resource === 'auth' && idRaw === 'signup' && req.method === 'POST') {
+        if (throttleAuth(req, res, 'signup', 8)) return;
         const { email, password } = await readJson(req);
         const e = typeof email === 'string' ? email.trim().toLowerCase() : '';
         if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e) || e.length > 254) return fail(res, 400, 'Invalid email');
@@ -359,6 +378,7 @@ const server = http.createServer(async (req, res) => {
         return startSession(req, res, { id: Number(result.lastInsertRowid), email: e });
       }
       if (resource === 'auth' && idRaw === 'login' && req.method === 'POST') {
+        if (throttleAuth(req, res, 'login', 15)) return;
         const { email, password } = await readJson(req);
         const u = db.prepare('SELECT * FROM users WHERE email = ?').get(typeof email === 'string' ? email.trim().toLowerCase() : '');
         if (!u || typeof password !== 'string' || !verifyPassword(password, u.password_hash)) return fail(res, 401, 'Invalid email or password');
